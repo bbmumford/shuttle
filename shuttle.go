@@ -58,9 +58,9 @@ func (v weftStamping) ValidateExecutionAuth(ctx context.Context, h ports.SecureH
 	return v.inner.ValidateExecutionAuth(ctx, h)
 }
 
-// WithTenantID forwards to inner; the tenant context key is inner's to own.
-func (v weftStamping) WithTenantID(ctx context.Context, tenantID string) context.Context {
-	return v.inner.WithTenantID(ctx, tenantID)
+// WithPartitionID forwards to inner; the partition context key is inner's to own.
+func (v weftStamping) WithPartitionID(ctx context.Context, partitionID string) context.Context {
+	return v.inner.WithPartitionID(ctx, partitionID)
 }
 
 // TransportPinnedAxis delegates to inner and carries no axis of its own. Two
@@ -82,7 +82,7 @@ func (v weftStamping) TransportPinnedAxis() string {
 // ctx so inner's carrier stamp survives (dual-stamp). Subject and scopes are read
 // from the sealed principal, never re-derived. The loom RPC server calls this
 // only after the transport-axis forge gate has passed, so the principal is
-// already reconciled to the transport tenant.
+// already reconciled to the transport partition.
 func (v weftStamping) WithAuthenticatedPrincipal(ctx context.Context, principal scope.AuthenticatedPrincipal) context.Context {
 	if stamper, ok := v.inner.(ports.AuthenticatedPrincipalStamper); ok {
 		ctx = stamper.WithAuthenticatedPrincipal(ctx, principal)

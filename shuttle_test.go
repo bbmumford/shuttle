@@ -21,7 +21,7 @@ import (
 
 type principalMarkerKey struct{}
 type wireMarkerKey struct{}
-type tenantMarkerKey struct{}
+type partitionMarkerKey struct{}
 
 var errValidate = errors.New("inner validate sentinel")
 
@@ -32,8 +32,8 @@ type fullInner struct{}
 func (fullInner) ValidateExecutionAuth(ctx context.Context, h ports.SecureHandler) error {
 	return errValidate
 }
-func (fullInner) WithTenantID(ctx context.Context, tenantID string) context.Context {
-	return context.WithValue(ctx, tenantMarkerKey{}, tenantID)
+func (fullInner) WithPartitionID(ctx context.Context, partitionID string) context.Context {
+	return context.WithValue(ctx, partitionMarkerKey{}, partitionID)
 }
 func (fullInner) TransportPinnedAxis() string { return "inner_pinned_axis" }
 func (fullInner) WithAuthenticatedPrincipal(ctx context.Context, p scope.AuthenticatedPrincipal) context.Context {
@@ -54,12 +54,14 @@ func (fullInner) ExecutionPartitionID(ctx context.Context) (string, bool) {
 // unwrapped: the pin must stay unset (fail-closed) and the readers absent.
 type bareInner struct{}
 
-func (bareInner) ValidateExecutionAuth(ctx context.Context, h ports.SecureHandler) error { return nil }
-func (bareInner) WithTenantID(ctx context.Context, tenantID string) context.Context      { return ctx }
+func (bareInner) ValidateExecutionAuth(ctx context.Context, h ports.SecureHandler) error  { return nil }
+func (bareInner) WithPartitionID(ctx context.Context, partitionID string) context.Context { return ctx }
 
 type stubExecPrincipal struct{}
 
-func (stubExecPrincipal) PartitionKey() ports.ExecutionPartitionKey { return ports.ExecutionPartitionKey{} }
+func (stubExecPrincipal) PartitionKey() ports.ExecutionPartitionKey {
+	return ports.ExecutionPartitionKey{}
+}
 func (stubExecPrincipal) AuthorizeExecution(ctx context.Context) (context.Context, func(), error) {
 	return ctx, func() {}, nil
 }
@@ -186,8 +188,8 @@ func TestWeftStamping_ForwardsBaseAuth(t *testing.T) {
 	if err := v.ValidateExecutionAuth(context.Background(), nil); !errors.Is(err, errValidate) {
 		t.Errorf("ValidateExecutionAuth = %v, want inner sentinel", err)
 	}
-	ctx := v.WithTenantID(context.Background(), "orbtr")
-	if ctx.Value(tenantMarkerKey{}) != "orbtr" {
-		t.Error("WithTenantID did not forward to inner")
+	ctx := v.WithPartitionID(context.Background(), "orbtr")
+	if ctx.Value(partitionMarkerKey{}) != "orbtr" {
+		t.Error("WithPartitionID did not forward to inner")
 	}
 }
