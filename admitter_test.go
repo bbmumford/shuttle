@@ -45,6 +45,12 @@ func TestMembershipAdmitter(t *testing.T) {
 	if err := admit.AdmitPrincipal(ctx, "orbtr", principalIn(t, "usr_1", "")); !errors.Is(err, ErrNoPartition) {
 		t.Fatalf("a principal with no partition: err = %v, want ErrNoPartition", err)
 	}
+	if err := admit.AdmitPrincipal(ctx, "orbtr", principalIn(t, "", "acme")); !errors.Is(err, ErrNoSubject) {
+		t.Fatalf("a principal naming no subject: err = %v, want ErrNoSubject", err)
+	}
+	if err := admit.AdmitPrincipal(ctx, "orbtr", principalIn(t, "", "orbtr")); !errors.Is(err, ErrNoSubject) {
+		t.Fatalf("a subjectless principal in the transport's own partition must still be refused: err = %v", err)
+	}
 	if err := (MembershipAdmitter{}).AdmitPrincipal(ctx, "orbtr", principalIn(t, "usr_1", "acme")); !errors.Is(err, ErrNoMembership) {
 		t.Fatalf("no membership check configured: err = %v, want ErrNoMembership", err)
 	}
@@ -53,5 +59,38 @@ func TestMembershipAdmitter(t *testing.T) {
 	}}
 	if err := broken.AdmitPrincipal(ctx, "orbtr", principalIn(t, "usr_1", "acme")); !errors.Is(err, ErrMembershipUnread) {
 		t.Fatalf("an unreadable membership must refuse even when the check also says true: err = %v", err)
+	}
+}
+
+// The rule does not bend for service code. A service principal that names a
+// partition it does not belong to is refused exactly like any other principal,
+// whatever grants it carries and whichever transport it arrived on — service
+// code that acts on another partition carries that partition as a request
+// field, not as the partition it claims to belong to.
+func TestMembershipAdmitter_ServicePrincipalGetsNoShortcut(t *testing.T) {
+	ctx := context.Background()
+	admit := MembershipAdmitter{IsMember: func(_ context.Context, subject, partition string) (bool, error) {
+		return subject == "svc_placer" && partition == "orbtr", nil
+	}}
+	svc, err := scope.NewAuthenticatedPrincipal(
+		scope.NewIdentity("svc_placer", "acme"),
+		[]string{"orbtr.platform:model_placement.place"},
+	)
+	if err != nil {
+		t.Fatalf("mint service principal: %v", err)
+	}
+	if err := admit.AdmitPrincipal(ctx, "orbtr", svc); !errors.Is(err, ErrNotMember) {
+		t.Fatalf("a service principal naming a partition it is not in: err = %v, want ErrNotMember", err)
+	}
+	// The same service, naming the partition it does belong to, is admitted.
+	home, err := scope.NewAuthenticatedPrincipal(
+		scope.NewIdentity("svc_placer", "orbtr"),
+		[]string{"orbtr.platform:model_placement.place"},
+	)
+	if err != nil {
+		t.Fatalf("mint service principal: %v", err)
+	}
+	if err := admit.AdmitPrincipal(ctx, "acme", home); err != nil {
+		t.Fatalf("a service principal in its own partition must be admitted over any transport: %v", err)
 	}
 }

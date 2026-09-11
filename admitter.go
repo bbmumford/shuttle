@@ -20,6 +20,14 @@ type MembershipFunc func(ctx context.Context, subject, partition string) (bool, 
 // whose subject IsMember confirms belongs to the asserted partition. So a
 // sending node can present a subject in any partition that subject belongs to,
 // and in no other.
+//
+// The rule is the same for every principal, service code included: the
+// partition a principal carries is the one it BELONGS to. Service code that
+// acts on another partition's behalf still belongs to its own, and carries the
+// partition it operates on as a request field, which the operation authorizes
+// against the grant the principal holds. Admitting such a principal onto the
+// partition it named instead would rest on the sending node's own claim about
+// itself, which is the assertion this type exists to check.
 type MembershipAdmitter struct {
 	// IsMember confirms a subject's membership of a partition other than the
 	// transport's. Nil refuses every such principal.
@@ -30,6 +38,7 @@ var _ ports.PrincipalAdmitter = MembershipAdmitter{}
 
 // Refusals AdmitPrincipal returns; each is wrapped with the partition involved.
 var (
+	ErrNoSubject        = errors.New("shuttle: principal names no subject")
 	ErrNoPartition      = errors.New("shuttle: principal carries no partition")
 	ErrNoMembership     = errors.New("shuttle: no membership check configured")
 	ErrNotMember        = errors.New("shuttle: subject is not a member of the asserted partition")
@@ -40,6 +49,12 @@ var (
 // transportPartition, or refuses it with an error naming why.
 func (a MembershipAdmitter) AdmitPrincipal(ctx context.Context, transportPartition string, principal scope.AuthenticatedPrincipal) error {
 	identity := principal.Identity()
+	// A principal with no subject names no one to hold to the request, and is
+	// the one IsMember can never answer for: every membership read for it asks
+	// after the empty subject.
+	if identity.Subject == "" {
+		return ErrNoSubject
+	}
 	partition := identity.Partition()
 	if partition == "" {
 		return ErrNoPartition
