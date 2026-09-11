@@ -20,7 +20,6 @@ import (
 // (which would discard inner's stamp — the silent constraint-3 violation). ---
 
 type principalMarkerKey struct{}
-type wireMarkerKey struct{}
 type partitionMarkerKey struct{}
 
 var errValidate = errors.New("inner validate sentinel")
@@ -38,9 +37,6 @@ func (fullInner) WithPartitionID(ctx context.Context, partitionID string) contex
 func (fullInner) TransportPinnedAxis() string { return "inner_pinned_axis" }
 func (fullInner) WithAuthenticatedPrincipal(ctx context.Context, p scope.AuthenticatedPrincipal) context.Context {
 	return context.WithValue(ctx, principalMarkerKey{}, true)
-}
-func (fullInner) WithWireIdentity(ctx context.Context, userID string, scopes []string) context.Context {
-	return context.WithValue(ctx, wireMarkerKey{}, userID)
 }
 func (fullInner) ExecutionPrincipal(ctx context.Context) (ports.ExecutionPrincipal, bool) {
 	return stubExecPrincipal{}, true
@@ -101,29 +97,6 @@ func TestWeftStamping_AuthenticatedPrincipal_DualStamp(t *testing.T) {
 	// inner's stamp survives ⇒ weft was built on the ctx inner returned (dual-stamp).
 	if ctx.Value(principalMarkerKey{}) != true {
 		t.Error("inner principal stamp discarded: weft was stamped on the original ctx, not inner's")
-	}
-}
-
-// TestWeftStamping_WireIdentity_DelegatesNoWeft: the wire-identity branch is the
-// unsealed receive path (subject+scopes from the mutable request map, forge gate
-// skipped), so shuttle delegates to inner (helpers behaviour byte-identical) but
-// stamps NO weft — even for a non-empty, self-declared userID. weft.ExtractScopes
-// is sealed-derived only; a self-declared wire scope never reaches it.
-func TestWeftStamping_WireIdentity_DelegatesNoWeft(t *testing.T) {
-	scopes := []string{"orbtr.io.assistant.core.use"}
-	ctx := WeftStamping(fullInner{}).(ports.ScopeStamper).
-		WithWireIdentity(context.Background(), "usr_bob", scopes)
-
-	// inner's wire stamp still ran (delegation is unconditional).
-	if ctx.Value(wireMarkerKey{}) != "usr_bob" {
-		t.Error("inner wire stamp must still run (delegation is unconditional)")
-	}
-	// but shuttle stamped NO weft from this unsealed branch, even with a non-empty userID.
-	if weft.IsAuthenticated(ctx) {
-		t.Error("wire-identity branch must NOT stamp weft (unsealed req.Context input)")
-	}
-	if got := weft.ExtractScopes(ctx); len(got) != 0 {
-		t.Errorf("wire-identity branch must not stamp self-declared scopes into weft, got %v", got)
 	}
 }
 

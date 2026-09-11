@@ -13,12 +13,11 @@
 // then see the caller's real scopes, which over the mesh they otherwise never
 // do (the product validator stamps its own carrier, not weft).
 //
-// weft is stamped ONLY on the sealed receive path (WithAuthenticatedPrincipal,
-// where the principal survived the transport-axis forge gate). The wire-identity
-// path (WithWireIdentity) reads its subject and scopes from the mutable request
-// map with that gate skipped, so shuttle delegates that branch to inner but
-// stamps NO weft from it — making weft.ExtractScopes structurally sealed-derived,
-// an authorization input that cannot be self-declared over the wire.
+// weft is stamped only on the sealed receive path (WithAuthenticatedPrincipal,
+// where the principal survived the transport-axis forge gate). loom lifts no
+// identity from a request that arrives without a sealed principal, so
+// weft.ExtractScopes is sealed-derived by construction: an authorization input
+// that cannot be self-declared over the wire.
 //
 // It is product-agnostic (loom + weft only) and holds no carrier of its own:
 // the product-specific stamp lives in the inner validator, whose ctx shuttle
@@ -99,23 +98,6 @@ func (v weftStamping) WithAuthenticatedPrincipal(ctx context.Context, principal 
 	return weft.SetAuthContext(ctx, id.Subject, principal.Scopes(), weftOrigin)
 }
 
-// WithWireIdentity (loom node/rpc.go wire-identity receive path) delegates to
-// inner's stamp first, then stamps weft onto the returned ctx — the same
-// dual-stamp on the wire-identity path so no receive route leaves weft unstamped.
-func (v weftStamping) WithWireIdentity(ctx context.Context, userID string, scopes []string) context.Context {
-	// The wire-identity branch reads userID and scopes from the mutable request map
-	// with the transport-axis forge gate skipped (loom rpc.go, the !typedPrincipal
-	// path), so both values are self-declarable and NOT sealed. Delegate to inner —
-	// its carrier behaviour is byte-identical to today — but stamp NOTHING on weft:
-	// weft is populated only from the sealed principal (WithAuthenticatedPrincipal).
-	// Populating it here would let a peer that omits the sealed principal put
-	// self-declared scopes into the authorization input warrantmesh / RequireScope read.
-	if stamper, ok := v.inner.(ports.ScopeStamper); ok {
-		return stamper.WithWireIdentity(ctx, userID, scopes)
-	}
-	return ctx
-}
-
 // ExecutionPrincipal (executor path) forwards to inner when inner reads one, and
 // otherwise reports absence exactly as an unwrapped non-reader would — wrapping
 // must not invent an execution principal.
@@ -136,7 +118,7 @@ func (v weftStamping) ExecutionPartitionID(ctx context.Context) (partitionID str
 }
 
 // Compile-time proof the decorator re-exposes every seam loom asserts on a
-// validator (rpc.go: ScopeStamper, TransportAxisPin, AuthenticatedPrincipalStamper;
+// validator (rpc.go: TransportAxisPin, AuthenticatedPrincipalStamper;
 // executor: ExecutionPrincipalReader, PartitionPrincipalReader). A future edit
 // that drops one fails the BUILD rather than silently disabling that gate — the
 // only failure mode that matters, since a dropped extension has no runtime error,
@@ -145,7 +127,6 @@ var (
 	_ ports.AuthValidator                 = weftStamping{}
 	_ ports.TransportAxisPin              = weftStamping{}
 	_ ports.AuthenticatedPrincipalStamper = weftStamping{}
-	_ ports.ScopeStamper                  = weftStamping{}
 	_ ports.ExecutionPrincipalReader      = weftStamping{}
 	_ ports.PartitionPrincipalReader      = weftStamping{}
 )
