@@ -34,7 +34,9 @@ func (fullInner) ValidateExecutionAuth(ctx context.Context, h ports.SecureHandle
 func (fullInner) WithPartitionID(ctx context.Context, partitionID string) context.Context {
 	return context.WithValue(ctx, partitionMarkerKey{}, partitionID)
 }
-func (fullInner) TransportPinnedAxis() string { return "inner_pinned_axis" }
+func (fullInner) AdmitPrincipal(context.Context, string, scope.AuthenticatedPrincipal) error {
+	return errInnerRefused
+}
 func (fullInner) WithAuthenticatedPrincipal(ctx context.Context, p scope.AuthenticatedPrincipal) context.Context {
 	return context.WithValue(ctx, principalMarkerKey{}, true)
 }
@@ -47,7 +49,7 @@ func (fullInner) ExecutionPartitionID(ctx context.Context) (string, bool) {
 
 // bareInner implements ONLY the base AuthValidator — none of the optional seams.
 // Wrapping it must not change what the optional seams do relative to leaving it
-// unwrapped: the pin must stay unset (fail-closed) and the readers absent.
+// unwrapped: admission must stay refused (fail-closed) and the readers absent.
 type bareInner struct{}
 
 func (bareInner) ValidateExecutionAuth(ctx context.Context, h ports.SecureHandler) error  { return nil }
@@ -100,16 +102,21 @@ func TestWeftStamping_AuthenticatedPrincipal_DualStamp(t *testing.T) {
 	}
 }
 
-// TestWeftStamping_PinDelegation is item 2's regression guard: shuttle carries no
-// axis opinion. Wrapping a pinning inner forwards its axis; wrapping a
-// non-pinning inner returns "" (loom's pre-wrap fail-closed), NOT a hardcoded
-// constant that would flip deny→admit merely by wrapping.
-func TestWeftStamping_PinDelegation(t *testing.T) {
-	if got := WeftStamping(fullInner{}).(ports.TransportAxisPin).TransportPinnedAxis(); got != "inner_pinned_axis" {
-		t.Errorf("wrapping a pinning inner: axis = %q, want the inner's inner_pinned_axis (delegated)", got)
+// errInnerRefused is fullInner's admitter verdict, distinct from any error the
+// decorator could produce on its own.
+var errInnerRefused = errors.New("refused by the inner admitter")
+
+// TestWeftStamping_AdmitterDelegation: shuttle carries no admission opinion.
+// Wrapping an inner with an admitter returns that admitter's own verdict;
+// wrapping an inner without one refuses, as loom does for an unwrapped
+// validator with no admitter, rather than admitting merely by wrapping.
+func TestWeftStamping_AdmitterDelegation(t *testing.T) {
+	var principal scope.AuthenticatedPrincipal
+	if err := WeftStamping(fullInner{}).(ports.PrincipalAdmitter).AdmitPrincipal(context.Background(), "orbtr", principal); !errors.Is(err, errInnerRefused) {
+		t.Errorf("wrapping an inner admitter: err = %v, want the inner's own verdict", err)
 	}
-	if got := WeftStamping(bareInner{}).(ports.TransportAxisPin).TransportPinnedAxis(); got != "" {
-		t.Errorf("wrapping a non-pinning inner: axis = %q, want \"\" (preserve loom's un-pinned fail-closed, not a hardcoded axis)", got)
+	if err := WeftStamping(bareInner{}).(ports.PrincipalAdmitter).AdmitPrincipal(context.Background(), "orbtr", principal); err == nil {
+		t.Error("wrapping an inner with no admitter admitted a principal; it must refuse as an unwrapped validator would")
 	}
 }
 

@@ -27,6 +27,7 @@ package shuttle
 
 import (
 	"context"
+	"errors"
 
 	"github.com/bbmumford/loom/pkg/rpc/scope"
 	"github.com/bbmumford/loom/ports"
@@ -62,26 +63,27 @@ func (v weftStamping) WithPartitionID(ctx context.Context, partitionID string) c
 	return v.inner.WithPartitionID(ctx, partitionID)
 }
 
-// TransportPinnedAxis delegates to inner and carries no axis of its own. Two
-// reasons a hardcoded axis would be wrong: (1) if inner pins a different axis,
-// shuttle would make the RPC server reconcile an axis the product did not
-// choose; (2) if inner does not pin at all, loom refuses every mesh principal
-// ("mesh principal requires a consumer transport-axis pin") — returning a real
-// axis here would flip that deny into an admit merely by wrapping. Returning ""
-// when inner does not pin preserves loom's pre-wrap fail-closed exactly.
-func (v weftStamping) TransportPinnedAxis() string {
-	if pinner, ok := v.inner.(ports.TransportAxisPin); ok {
-		return pinner.TransportPinnedAxis()
+// AdmitPrincipal delegates to inner and admits nothing on its own. loom refuses
+// every mesh principal when the validator implements no admitter ("a mesh
+// principal requires a consumer principal admitter"); admitting here would flip
+// that deny into an admit merely by wrapping. When inner has no admitter this
+// refuses, so wrapping preserves loom's fail-closed exactly.
+func (v weftStamping) AdmitPrincipal(ctx context.Context, transportPartition string, principal scope.AuthenticatedPrincipal) error {
+	if admitter, ok := v.inner.(ports.PrincipalAdmitter); ok {
+		return admitter.AdmitPrincipal(ctx, transportPartition, principal)
 	}
-	return ""
+	return errNoInnerAdmitter
 }
+
+// errNoInnerAdmitter is AdmitPrincipal's refusal when the wrapped validator
+// implements no admitter.
+var errNoInnerAdmitter = errors.New("the wrapped validator implements no principal admitter")
 
 // WithAuthenticatedPrincipal (loom node/rpc.go receive path) delegates to inner's
 // stamp first, then stamps weft onto the ctx inner RETURNED — building on inner's
 // ctx so inner's carrier stamp survives (dual-stamp). Subject and scopes are read
 // from the sealed principal, never re-derived. The loom RPC server calls this
-// only after the transport-axis forge gate has passed, so the principal is
-// already reconciled to the transport partition.
+// only after AdmitPrincipal has accepted the principal.
 func (v weftStamping) WithAuthenticatedPrincipal(ctx context.Context, principal scope.AuthenticatedPrincipal) context.Context {
 	if stamper, ok := v.inner.(ports.AuthenticatedPrincipalStamper); ok {
 		ctx = stamper.WithAuthenticatedPrincipal(ctx, principal)
@@ -118,14 +120,14 @@ func (v weftStamping) ExecutionPartitionID(ctx context.Context) (partitionID str
 }
 
 // Compile-time proof the decorator re-exposes every seam loom asserts on a
-// validator (rpc.go: TransportAxisPin, AuthenticatedPrincipalStamper;
+// validator (rpc.go: PrincipalAdmitter, AuthenticatedPrincipalStamper;
 // executor: ExecutionPrincipalReader, PartitionPrincipalReader). A future edit
 // that drops one fails the BUILD rather than silently disabling that gate — the
 // only failure mode that matters, since a dropped extension has no runtime error,
 // only a feature that quietly stops.
 var (
 	_ ports.AuthValidator                 = weftStamping{}
-	_ ports.TransportAxisPin              = weftStamping{}
+	_ ports.PrincipalAdmitter             = weftStamping{}
 	_ ports.AuthenticatedPrincipalStamper = weftStamping{}
 	_ ports.ExecutionPrincipalReader      = weftStamping{}
 	_ ports.PartitionPrincipalReader      = weftStamping{}
