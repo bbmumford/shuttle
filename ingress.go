@@ -5,6 +5,7 @@
 package shuttle
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/bbmumford/loom/pkg/rpc/scope"
@@ -24,6 +25,17 @@ type ProvedIdentity struct {
 	Subject   string
 	Partition string
 	Grants    []string
+
+	// SessionID is the identifier of the session the credential was proved
+	// through, for a consumer that must scope a record to one sitting rather than
+	// to the subject — enrolling a device key against the session that authorised
+	// it, so a later session cannot use the enrolment.
+	//
+	// Empty is a legitimate value, not a missing one: a credential with no session
+	// behind it (an API key, a machine caller) has no sitting to name, and a
+	// consumer that needs one must refuse an empty value rather than substitute
+	// the subject. Subject identifies WHO; this identifies WHICH VISIT.
+	SessionID string
 }
 
 // CredentialReader resolves the credential a request carries into the identity
@@ -58,6 +70,25 @@ type IngressConfig struct {
 	// here would make weft.GetAuthType report an unstamped request as
 	// authenticated.
 	AuthType string
+
+	// Seal, when non-nil, decorates the context after the loom and weft stamps,
+	// receiving the proved identity in full — including the fields the loom
+	// principal has no room for, such as SessionID.
+	//
+	// It exists because a consumer's own identity carrier is declared downstream
+	// of this package and cannot be named here: shuttle depends on loom and weft
+	// and on no consumer's types, which is what lets an application evolve its
+	// carrier without a change reaching this module. The consumer supplies the one
+	// function that knows both sides.
+	//
+	// It runs only on a request that proved, after the seals above, so it observes
+	// the same identity they did and cannot cause a request to be treated as
+	// authenticated that otherwise would not be. Returning the ctx unchanged is
+	// valid; returning a nil ctx is ignored, because a decorator that drops the
+	// context would discard the loom and weft stamps this function exists to
+	// extend. nil stamps nothing extra, which is what a consumer needing only the
+	// loom principal wants.
+	Seal func(ctx context.Context, proved ProvedIdentity) context.Context
 }
 
 // Ingress is the HTTP arm of what WeftStamping does on the mesh receive path.
@@ -116,6 +147,16 @@ func Ingress(cfg IngressConfig) func(http.Handler) http.Handler {
 				principal.Scopes(),
 				authType,
 			)
+			// After the seals above, so a decorator observes the identity they
+			// sealed. A nil return is ignored rather than honoured: dropping the
+			// context here would discard the loom and weft stamps this hook exists
+			// to extend, and a request would reach the handler less authenticated
+			// than the one that proved.
+			if cfg.Seal != nil {
+				if sealed := cfg.Seal(ctx, proved); sealed != nil {
+					ctx = sealed
+				}
+			}
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}

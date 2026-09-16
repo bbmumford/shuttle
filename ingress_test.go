@@ -168,3 +168,71 @@ func TestIngressStampFeedsTheAdmitter(t *testing.T) {
 		t.Fatalf("an Ingress-stamped principal must be admissible: %v", err)
 	}
 }
+
+// TestIngressSealReceivesTheProvedIdentity covers the reason Seal exists: the
+// loom principal carries subject, partition and grants, so a field it has no room
+// for — SessionID — reaches a consumer only through this hook. Asserting the
+// session VALUE rather than that Seal ran is what distinguishes a hook wired to
+// the proved identity from one handed an empty struct.
+func TestIngressSealReceivesTheProvedIdentity(t *testing.T) {
+	var seen ProvedIdentity
+	serveIngress(t, IngressConfig{
+		Reader: readerOf(ProvedIdentity{
+			Subject: "usr_1", Partition: "acme", SessionID: "sess_abc",
+		}, true),
+		Seal: func(ctx context.Context, proved ProvedIdentity) context.Context {
+			seen = proved
+			return ctx
+		},
+	})
+
+	if seen.SessionID != "sess_abc" {
+		t.Fatalf("Seal saw SessionID %q, want the one the reader proved", seen.SessionID)
+	}
+	if seen.Subject != "usr_1" || seen.Partition != "acme" {
+		t.Fatalf("Seal saw %+v, want the full proved identity", seen)
+	}
+}
+
+// TestIngressSealDoesNotRunOnAnUnprovedRequest pins the property that makes this
+// hook safe to add: it cannot turn an unauthenticated request into a decorated
+// one. A consumer stamping its own carrier here must never see a request the
+// loom and weft seals above declined to stamp.
+func TestIngressSealDoesNotRunOnAnUnprovedRequest(t *testing.T) {
+	ran := false
+	record := func(ctx context.Context, _ ProvedIdentity) context.Context {
+		ran = true
+		return ctx
+	}
+
+	serveIngress(t, IngressConfig{
+		Reader: readerOf(ProvedIdentity{Subject: "usr_1", Partition: "acme"}, false),
+		Seal:   record,
+	})
+	if ran {
+		t.Fatal("Seal ran for a reader reporting no credential")
+	}
+
+	serveIngress(t, IngressConfig{
+		Reader: readerOf(ProvedIdentity{Subject: "usr_1"}, true), // no partition
+		Seal:   record,
+	})
+	if ran {
+		t.Fatal("Seal ran for an identity missing its partition")
+	}
+}
+
+// TestIngressSealReturningNilKeepsTheSeals is the guard on the guard. A decorator
+// that returns nil would otherwise blank the context, discarding the loom and
+// weft stamps this hook exists to EXTEND — so a request that proved would reach
+// the handler less authenticated than one that did not.
+func TestIngressSealReturningNilKeepsTheSeals(t *testing.T) {
+	ctx := serveIngress(t, IngressConfig{
+		Reader: readerOf(ProvedIdentity{Subject: "usr_1", Partition: "acme"}, true),
+		Seal:   func(context.Context, ProvedIdentity) context.Context { return nil },
+	})
+
+	if _, ok := scope.AuthenticatedPrincipalFromContext(ctx); !ok {
+		t.Fatal("a nil-returning Seal discarded the loom principal")
+	}
+}
