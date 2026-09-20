@@ -35,9 +35,12 @@ import (
 )
 
 // weftOrigin is the auth-type shuttle records on the weft carrier for a
-// mesh-received principal, matching the inner loom stamper's "mesh" origin so a
-// weft reader cannot tell which stamp wrote it.
-const weftOrigin = "mesh"
+// mesh-received principal. It is weft's own constant rather than a literal of
+// shuttle's, because the inner stamper writes the same value onto a different
+// carrier and a reader comparing either against a handler's admitted set does it
+// by exact string match — two private spellings of one wire value agree only
+// while nobody edits one of them.
+const weftOrigin = weft.AuthTypeMesh
 
 // weftStamping decorates inner so the mesh receive path also stamps weft. inner
 // is the product's own validator (e.g. helpers.LoomValidator); shuttle never
