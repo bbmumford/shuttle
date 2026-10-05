@@ -18,9 +18,14 @@ import (
 //
 // It is realm-closed in both directions: a required capability outside realm
 // is refused, and grants outside realm are ignored, so no other realm's grant
-// can satisfy or spoil a requirement here. Grants that do not parse as
-// capabilities (dotted scope strings) are ignored. Matching, terminal-"*"
-// subsumption and deny precedence are warrant.CapabilitySet.Allows'.
+// can satisfy or spoil a requirement here. A grant naming a realm before a colon
+// is a capability and must parse: one that does not refuses the whole held set
+// and with it every requirement, because the element that does not parse may be
+// a deny and skipping it would confer what it withholds
+// (warrant.ParseGrantSet). A grant with no colon is a dotted scope string, which
+// another judge of the same policy reads through warrant.ScopeConversion, so it
+// is no element of this set. Matching, terminal-"*" subsumption and deny
+// precedence are warrant.CapabilitySet.Allows'.
 //
 // loom's registries call it through scope.NewPolicy(DirectCapabilities(realm))
 // for operations that declare scope.Capability(...). Grants cross the mesh as
@@ -38,16 +43,11 @@ func (d directCapabilities) HasCapability(principal scope.AuthenticatedPrincipal
 	if err != nil || required.IsDeny() || required.Realm() != d.realm {
 		return false
 	}
-	grants := principal.Scopes()
-	held := make([]warrant.Capability, 0, len(grants))
-	for _, grant := range grants {
-		c, err := warrant.ParseCapability(grant)
-		if err != nil || c.Realm() != d.realm {
-			continue
-		}
-		held = append(held, c)
+	held, err := warrant.ParseGrantSet(principal.Scopes(), d.realm)
+	if err != nil {
+		return false
 	}
-	return warrant.NewCapabilitySet(held...).Allows(required)
+	return held.Allows(required)
 }
 
 var _ scope.Authorizer = directCapabilities{}
