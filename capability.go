@@ -22,9 +22,13 @@ import (
 // is a capability and must parse: one that does not refuses the whole held set
 // and with it every requirement, because the element that does not parse may be
 // a deny and skipping it would confer what it withholds
-// (warrant.ParseGrantSet). A grant with no colon is a dotted scope string, which
-// another judge of the same policy reads through warrant.ScopeConversion, so it
-// is no element of this set. Matching, terminal-"*" subsumption and deny
+// (warrant.ParseGrantSet). A grant with no colon is the dotted vocabulary's and
+// no element of this set: a judge whose realm converts that vocabulary reads it
+// through warrant.ScopeConversion, and refusing on it here would deny every
+// caller whose grant list carries both at once. This judge runs no conversion,
+// so under ITS realm a dotted grant confers nothing and a dotted deny withholds
+// nothing — a realm judged here alone must spell its denies as capabilities, the
+// form this judge requires to parse. Matching, terminal-"*" subsumption and deny
 // precedence are warrant.CapabilitySet.Allows'.
 //
 // loom's registries call it through scope.NewPolicy(DirectCapabilities(realm))
