@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2026 HSTLES / ORBTR Pty Ltd. All Rights Reserved.
+ * Copyright (c) 2026 Brandon Miller-Mumford. Licensed under the MIT License; see LICENSE.
  */
 
 // Package shuttle carries a loom-sealed identity into the weft carrier on the
